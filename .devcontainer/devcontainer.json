@@ -1,0 +1,21 @@
+{
+  "name": "PowerPay HA Integration Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13-bookworm",
+  "forwardPorts": [8123],
+  "portsAttributes": {
+    "8123": { "label": "Home Assistant", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": "pip install homeassistant && pip install -r requirements_test.txt && mkdir -p config/custom_components && ln -sf $(pwd)/custom_components/powerpay config/custom_components/powerpay",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}

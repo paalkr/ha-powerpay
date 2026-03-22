@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PowerPay-innlogging",
+        "description": "Skriv inn dine PowerPay-kontolegitimasjon.",
+        "data": {
+          "email": "E-post",
+          "password": "Passord"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Autentiser PowerPay på nytt",
+        "description": "PowerPay-økten din har utløpt. Skriv inn passordet ditt for å koble til på nytt.",
+        "data": {
+          "password": "Passord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ugyldig e-post eller passord",
+      "cannot_connect": "Kan ikke koble til PowerPay",
+      "unknown": "En uventet feil oppstod"
+    },
+    "abort": {
+      "already_configured": "Denne PowerPay-kontoen er allerede konfigurert"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PowerPay-innstillinger",
+        "data": {
+          "scan_interval": "Oppdateringsintervall (sekunder)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": { "name": "Nåværende effekt" },
+      "session_energy": { "name": "Øktforbruk" },
+      "session_cost": { "name": "Øktkostnad" },
+      "session_duration": { "name": "Øktvarighet" },
+      "price_per_kwh": { "name": "Pris per kWh" },
+      "monthly_cost": { "name": "Månedlig kostnad" },
+      "active_sessions": { "name": "Aktive økter" }
+    },
+    "binary_sensor": {
+      "outlet_active": { "name": "Uttak aktivt" }
+    },
+    "switch": {
+      "outlet_switch": { "name": "Uttak" }
+    }
+  }
+}

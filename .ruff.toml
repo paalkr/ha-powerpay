@@ -1,0 +1,9 @@
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "TCH"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["custom_components.powerpay"]

@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PowerPay Login",
+        "description": "Enter your PowerPay account credentials.",
+        "data": { "email": "Email", "password": "Password" }
+      },
+      "site": {
+        "title": "Select Location",
+        "description": "Choose the harbour or campsite where your outlet is.",
+        "data": { "site_id": "Location" }
+      },
+      "device": {
+        "title": "Select Device & Outlets",
+        "description": "Choose the power post and which outlets to control.",
+        "data": { "device_id": "Device", "outlets": "Outlets" }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate PowerPay",
+        "description": "Your PowerPay session has expired. Please enter your password to reconnect.",
+        "data": { "password": "Password" }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PowerPay",
+        "description": "Update your credentials.",
+        "data": { "email": "Email", "password": "Password" }
+      },
+      "reconfigure_site": {
+        "title": "Select Location",
+        "description": "Choose a different harbour or campsite.",
+        "data": { "site_id": "Location" }
+      },
+      "reconfigure_device": {
+        "title": "Select Device & Outlets",
+        "description": "Change the power post or outlets to control.",
+        "data": { "device_id": "Device", "outlets": "Outlets" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to PowerPay",
+      "unknown": "An unexpected error occurred",
+      "no_outlets_selected": "Please select at least one outlet"
+    },
+    "abort": {
+      "already_configured": "This PowerPay account is already configured",
+      "no_sites": "No PowerPay locations found for this account",
+      "no_devices": "No devices found at the selected location",
+      "reconfigure_successful": "Configuration updated successfully"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PowerPay Options",
+        "data": { "scan_interval": "Update interval (seconds)" }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": { "name": "Current power" },
+      "session_energy": { "name": "Session energy" },
+      "session_cost": { "name": "Session cost" },
+      "session_billed_cost": { "name": "Session billed cost" },
+      "calculated_energy": { "name": "Calculated energy" },
+      "session_duration": { "name": "Session duration" },
+      "price_per_kwh": { "name": "Price per kWh" },
+      "monthly_billing": { "name": "Monthly billing" },
+      "active_sessions": { "name": "Active sessions" }
+    },
+    "binary_sensor": { "outlet_active": { "name": "Outlet active" } },
+    "switch": { "outlet_switch": { "name": "Outlet" } }
+  }
+}

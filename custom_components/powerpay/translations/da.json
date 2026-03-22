@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PowerPay-login",
+        "description": "Indtast dine PowerPay-kontooplysninger.",
+        "data": { "email": "E-mail", "password": "Adgangskode" }
+      },
+      "reauth_confirm": {
+        "title": "Genautentificer PowerPay",
+        "description": "Din PowerPay-session er udløbet. Indtast din adgangskode.",
+        "data": { "password": "Adgangskode" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ugyldig e-mail eller adgangskode",
+      "cannot_connect": "Kan ikke forbinde til PowerPay",
+      "unknown": "En uventet fejl opstod"
+    },
+    "abort": { "already_configured": "Denne PowerPay-konto er allerede konfigureret" }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": { "name": "Aktuel effekt" },
+      "session_energy": { "name": "Sessionsenergi" },
+      "session_cost": { "name": "Sessionsomkostning" },
+      "session_duration": { "name": "Sessionsvarighed" },
+      "price_per_kwh": { "name": "Pris pr. kWh" },
+      "monthly_cost": { "name": "Månedlig omkostning" },
+      "active_sessions": { "name": "Aktive sessioner" }
+    },
+    "binary_sensor": { "outlet_active": { "name": "Stik aktivt" } },
+    "switch": { "outlet_switch": { "name": "Stik" } }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Inicio de sesión en PowerPay",
+        "description": "Ingrese las credenciales de su cuenta PowerPay.",
+        "data": { "email": "Correo electrónico", "password": "Contraseña" }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar PowerPay",
+        "description": "Su sesión de PowerPay ha expirado. Ingrese su contraseña.",
+        "data": { "password": "Contraseña" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Correo electrónico o contraseña no válidos",
+      "cannot_connect": "No se puede conectar a PowerPay",
+      "unknown": "Se produjo un error inesperado"
+    },
+    "abort": { "already_configured": "Esta cuenta de PowerPay ya está configurada" }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": { "name": "Potencia actual" },
+      "session_energy": { "name": "Energía de sesión" },
+      "session_cost": { "name": "Costo de sesión" },
+      "session_duration": { "name": "Duración de sesión" },
+      "price_per_kwh": { "name": "Precio por kWh" },
+      "monthly_cost": { "name": "Costo mensual" },
+      "active_sessions": { "name": "Sesiones activas" }
+    },
+    "binary_sensor": { "outlet_active": { "name": "Toma activa" } },
+    "switch": { "outlet_switch": { "name": "Toma" } }
+  }
+}
