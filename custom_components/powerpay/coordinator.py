@@ -79,6 +79,7 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
             firebase_uid=self.client.firebase_uid or "",
             monthly_billing=monthly_billing,
             monthly_currency=monthly_currency,
+            unbilled_consumption=sum(s.cost_nok for s in sessions),
         )
 
     async def _fetch_monthly_billing(

@@ -15,6 +15,7 @@ from custom_components.powerpay.sensor import (
     PowerPayMonthlyBillingSensor,
     PowerPayPowerSensor,
     PowerPayPriceSensor,
+    PowerPayUnbilledConsumptionSensor,
 )
 
 from .conftest import MOCK_DEVICE_ID
@@ -124,6 +125,17 @@ class TestMonthlyBillingSensor:
 
     def test_value_empty(self, coordinator_empty):
         sensor = PowerPayMonthlyBillingSensor(coordinator_empty, "test_entry")
+        assert sensor.native_value == 0
+
+
+class TestUnbilledConsumptionSensor:
+    def test_value(self, coordinator_with_session):
+        coordinator_with_session.data.unbilled_consumption = 8.19
+        sensor = PowerPayUnbilledConsumptionSensor(coordinator_with_session, "test_entry")
+        assert sensor.native_value == 8.19
+
+    def test_value_empty(self, coordinator_empty):
+        sensor = PowerPayUnbilledConsumptionSensor(coordinator_empty, "test_entry")
         assert sensor.native_value == 0
 
 

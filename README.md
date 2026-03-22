@@ -66,6 +66,7 @@ The integration polls PowerPay every **60 seconds** when a session is active, an
 | Sensor | Unit | Source | Description |
 |--------|------|--------|-------------|
 | **Monthly billing** | NOK* | API: `purchases` endpoint | Total amount billed by PowerPay in the current calendar month. Sums all Stripe invoices by their billing date, plus the billed cost of any active session. See billing section below. |
+| **Unbilled consumption** | NOK* | Calculated: sum of session costs | Running total of energy costs from active sessions that haven't been invoiced yet. Shows what the next bill will include at minimum. Drops to 0 after billing. |
 | **Active sessions** | count | API: session count | Number of currently active sessions across all configured outlets. |
 
 ## How PowerPay billing works

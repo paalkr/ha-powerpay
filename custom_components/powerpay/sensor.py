@@ -54,6 +54,7 @@ async def async_setup_entry(
     entities.extend(
         [
             PowerPayMonthlyBillingSensor(coordinator, entry.entry_id),
+            PowerPayUnbilledConsumptionSensor(coordinator, entry.entry_id),
             PowerPayActiveSessionsSensor(coordinator, entry.entry_id),
         ]
     )
@@ -244,6 +245,26 @@ class PowerPayMonthlyBillingSensor(PowerPayAccountEntity, SensorEntity):
     @property
     def native_unit_of_measurement(self) -> str:
         """Return currency from billing data."""
+        return self.coordinator.data.monthly_currency
+
+
+class PowerPayUnbilledConsumptionSensor(PowerPayAccountEntity, SensorEntity):
+    """Cost of active sessions not yet invoiced by PowerPay."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+    _attr_translation_key = "unbilled_consumption"
+
+    def __init__(self, coordinator: PowerPayCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, "unbilled_consumption")
+
+    @property
+    def native_value(self) -> float:
+        return self.coordinator.data.unbilled_consumption
+
+    @property
+    def native_unit_of_measurement(self) -> str:
         return self.coordinator.data.monthly_currency
 
 

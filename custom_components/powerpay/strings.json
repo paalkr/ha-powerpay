@@ -88,6 +88,7 @@
       "session_duration": { "name": "Session duration" },
       "price_per_kwh": { "name": "Price per kWh" },
       "monthly_billing": { "name": "Monthly billing" },
+      "unbilled_consumption": { "name": "Unbilled consumption" },
       "active_sessions": { "name": "Active sessions" }
     },
     "binary_sensor": {

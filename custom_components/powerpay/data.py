@@ -59,3 +59,4 @@ class PowerPayData:
     firebase_uid: str = ""
     monthly_billing: float = 0.0
     monthly_currency: str = "NOK"
+    unbilled_consumption: float = 0.0
