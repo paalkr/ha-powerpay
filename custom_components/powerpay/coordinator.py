@@ -103,11 +103,12 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
     async def _fetch_monthly_billing(
         self, active_sessions: list[PowerPaySessionData]
     ) -> tuple[float, str]:
-        """Calculate monthly billing from invoices + active session billed cost.
+        """Calculate monthly billing from paid invoices this month.
 
-        PowerPay bills monthly via Stripe on the 20th. We sum invoices whose
-        billing date (event_ts) falls in the current calendar month, plus
-        the billed cost of any active sessions (not yet invoiced).
+        PowerPay bills monthly via Stripe on the 20th. We sum only paid
+        invoices billed in the current calendar month. Active session costs
+        are NOT added separately — they appear in the purchases data as
+        pending/in-progress entries and would cause double-counting.
         """
         import time as _time
 
@@ -117,7 +118,7 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
         total_billing = 0.0
         currency = "NOK"
 
-        # Cache purchases for 5 minutes (they change at most monthly)
+        # Cache purchases for 5 minutes
         cache_age = _time.time() - self._purchases_cache_ts
         if self._purchases_cache is None or cache_age > 300:
             try:
@@ -135,7 +136,7 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
             except Exception:
                 _LOGGER.debug("Failed to fetch purchases for monthly billing")
 
-        # Sum invoices billed in the current calendar month (øre → NOK)
+        # Sum only paid invoices billed in the current calendar month (øre → NOK)
         if self._purchases_cache:
             for p in self._purchases_cache:
                 pe = p.get("payment_event", {})
@@ -144,6 +145,8 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
                     continue
                 meta = pe.get("metadata", {})
                 stripe = meta.get("stripe_details", {})
+                if stripe.get("invoice_status") != "paid":
+                    continue
                 stripe_total = stripe.get("total", 0)  # øre
                 if stripe_total > 0:
                     total_billing += stripe_total / 100  # øre → NOK
@@ -151,11 +154,12 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
                 if cur:
                     currency = cur
 
-        # Add billed cost from active sessions (not yet invoiced)
-        for session in active_sessions:
-            total_billing += session.billed_cost_nok
-            if session.currency:
-                currency = session.currency
+        # Get currency from active sessions if no invoices found
+        if currency == "NOK":
+            for session in active_sessions:
+                if session.currency:
+                    currency = session.currency
+                    break
 
         return total_billing, currency
 
