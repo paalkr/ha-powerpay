@@ -53,9 +53,27 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
         sessions: list[PowerPaySessionData] = []
         devices: dict[str, PowerPayDeviceData] = {}
 
+        # Get previous data for accumulation
+        prev_sessions: dict[str, PowerPaySessionData] = {}
+        if self.data:
+            prev_sessions = {s.session_id: s for s in self.data.sessions}
+
         for raw in sessions_raw:
             session = self._parse_session(raw)
             if session:
+                # Accumulate calculated energy between polls (never decreases)
+                prev = prev_sessions.get(session.session_id)
+                if prev and prev.duration_seconds > 0:
+                    time_delta_h = max(0, session.duration_seconds - prev.duration_seconds) / 3600
+                    energy_delta_kwh = session.current_power_w * time_delta_h / 1000
+                    session.calculated_energy_kwh = prev.calculated_energy_kwh + energy_delta_kwh
+                else:
+                    # First poll or new session: start from API meter reading
+                    session.calculated_energy_kwh = session.energy_kwh
+
+                # Recalculate cost from accumulated energy (also never decreases)
+                session.cost_nok = session.calculated_energy_kwh * session.price_per_kwh
+
                 sessions.append(session)
 
             # Extract device info from session data
@@ -157,13 +175,9 @@ class PowerPayCoordinator(DataUpdateCoordinator[PowerPayData]):
             # Parse price from model_string or price_structure_parameters
             price_per_kwh = self._extract_price(price_set)
 
-            # Calculated energy: power * duration (updates every poll, unlike meter)
-            power_w = raw.get("power", 0)
-            duration_ms = raw.get("duration", 0)
-            calculated_energy_kwh = power_w * duration_ms / 3_600_000_000
-
-            # Calculated cost uses calculated energy (more responsive than meter)
-            cost_nok = calculated_energy_kwh * price_per_kwh
+            # Initial values — overwritten by accumulator in _fetch_data
+            calculated_energy_kwh = energy_kwh  # Start from API meter
+            cost_nok = energy_kwh * price_per_kwh
 
             # Billed cost from PowerPay (bills per whole kWh, lags behind)
             # price_basis.amount.value is in øre

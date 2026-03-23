@@ -62,7 +62,7 @@
     "sensor": {
       "current_power": { "name": "Current power" },
       "session_energy": { "name": "Session energy" },
-      "session_cost": { "name": "Session cost" },
+      "session_cost": { "name": "Calculated session cost" },
       "session_billed_cost": { "name": "Session billed cost" },
       "calculated_energy": { "name": "Calculated energy" },
       "session_duration": { "name": "Session duration" },

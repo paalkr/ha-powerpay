@@ -52,10 +52,9 @@ async def test_fetch_with_active_session(hass: HomeAssistant, mock_client):
     session = data.sessions[0]
     assert session.session_id == MOCK_SESSION_ID
     assert session.energy_kwh == pytest.approx(3858.103, rel=0.01)  # API meter
-    # Calculated energy: power(1043W) * duration(16550269984ms) / 3.6e9
-    expected_calc_energy = 1043 * 16550269984 / 3_600_000_000
-    assert session.calculated_energy_kwh == pytest.approx(expected_calc_energy, rel=0.01)
-    assert session.cost_nok == pytest.approx(expected_calc_energy * 1.86, rel=0.01)
+    # First poll: calculated energy starts from API meter reading
+    assert session.calculated_energy_kwh == pytest.approx(3858.103, rel=0.01)
+    assert session.cost_nok == pytest.approx(3858.103 * 1.86, rel=0.01)
     assert session.billed_cost_nok == pytest.approx(6308.47, rel=0.01)  # from price_basis
     assert session.price_per_kwh == 1.86
     assert session.current_power_w == 1043
