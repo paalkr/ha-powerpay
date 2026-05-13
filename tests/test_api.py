@@ -180,6 +180,109 @@ class TestActionIdDiscovery:
         ids = api_client._extract_action_ids_from_html("<html>nothing</html>")
         assert ids == []
 
+    def test_extract_named_action_refs(self, api_client: PowerPayApiClient):
+        js = (
+            'createServerReference)("40c329e4bb98cf12969ba03c3c2384a5e0c4caff04",'
+            'o.callServer,void 0,o.findSourceMapURL,"serverEncryptData");'
+            'createServerReference)("7fb4cdad5a87183902e0c34fc7dd364fce3d0690a3",'
+            'o.callServer,void 0,o.findSourceMapURL,"default");'
+        )
+        refs = api_client._extract_named_action_refs(js)
+        assert (
+            "40c329e4bb98cf12969ba03c3c2384a5e0c4caff04",
+            "serverEncryptData",
+        ) in refs
+        assert (
+            "7fb4cdad5a87183902e0c34fc7dd364fce3d0690a3",
+            "default",
+        ) in refs
+
+    def test_pick_gateway_prefers_default(self, api_client: PowerPayApiClient):
+        refs = [
+            ("40c329e4bb98cf12969ba03c3c2384a5e0c4caff04", "serverEncryptData"),
+            ("7fb4cdad5a87183902e0c34fc7dd364fce3d0690a3", "default"),
+            ("60f6f8cca252a02a722d3635e5246589838af09c49", "serverCreateEncryptedPayload"),
+        ]
+        assert (
+            api_client._pick_gateway_action_id(refs)
+            == "7fb4cdad5a87183902e0c34fc7dd364fce3d0690a3"
+        )
+
+    def test_pick_gateway_skips_encryption_helpers(self, api_client: PowerPayApiClient):
+        refs = [
+            ("40c329e4bb98cf12969ba03c3c2384a5e0c4caff04", "serverEncryptData"),
+            ("40d2d22a7c5e37e3f2d2106d70669c314c7c7d3b12", "serverDecryptData"),
+            ("60f6f8cca252a02a722d3635e5246589838af09c49", "serverCreateEncryptedPayload"),
+            ("40997055632faa222d49a94892a23de7d5ba7e5532", "serverDecryptPayload"),
+        ]
+        assert api_client._pick_gateway_action_id(refs) is None
+
+    def test_pick_gateway_falls_back_to_non_helper_name(
+        self, api_client: PowerPayApiClient
+    ):
+        refs = [
+            ("40c329e4bb98cf12969ba03c3c2384a5e0c4caff04", "serverEncryptData"),
+            ("aabbccddeeff00112233445566778899aabbccddee", "someOtherAction"),
+        ]
+        assert (
+            api_client._pick_gateway_action_id(refs)
+            == "aabbccddeeff00112233445566778899aabbccddee"
+        )
+
+    @pytest.mark.asyncio
+    async def test_discover_from_chunk_picks_default(self, api_client: PowerPayApiClient):
+        """Primary path: chunk-based discovery picks the action named "default"."""
+        api_client._firebase_id_token = "mock_token"
+
+        gateway_id = "7fb4cdad5a87183902e0c34fc7dd364fce3d0690a3"
+        encrypt_id = "40c329e4bb98cf12969ba03c3c2384a5e0c4caff04"
+        chunk_url = "static/chunks/0001-deadbeef.js"
+        home_with_chunk = (
+            "<!DOCTYPE html><html><body>"
+            f'<script src="/_next/{chunk_url}"></script>'
+            f'<script>self.__next_f.push([1,"{encrypt_id}"])</script>'
+            "</body></html>"
+        )
+        chunk_body = (
+            f'createServerReference)("{encrypt_id}",'
+            'o.callServer,void 0,o.findSourceMapURL,"serverEncryptData");'
+            f'createServerReference)("{gateway_id}",'
+            'o.callServer,void 0,o.findSourceMapURL,"default");'
+        )
+
+        with aioresponses() as m:
+            m.get(POWERPAY_HOME_URL, body=home_with_chunk)
+            m.get(f"https://app.powerpay.no/_next/{chunk_url}", body=chunk_body)
+            await api_client._async_discover_action_id()
+
+            assert api_client._action_id == gateway_id
+
+    @pytest.mark.asyncio
+    async def test_discover_excludes_helper_ids_from_html_fallback(
+        self, api_client: PowerPayApiClient
+    ):
+        """Fallback path: HTML hex scan must not pick helper IDs found in chunks."""
+        api_client._firebase_id_token = "mock_token"
+
+        encrypt_id = "40c329e4bb98cf12969ba03c3c2384a5e0c4caff04"
+        chunk_url = "static/chunks/0002-deadbeef.js"
+        home_with_chunk = (
+            "<!DOCTYPE html><html><body>"
+            f'<script src="/_next/{chunk_url}"></script>'
+            f'<script>self.__next_f.push([1,"{encrypt_id}"])</script>'
+            "</body></html>"
+        )
+        chunk_body = (
+            f'createServerReference)("{encrypt_id}",'
+            'o.callServer,void 0,o.findSourceMapURL,"serverEncryptData");'
+        )
+
+        with aioresponses() as m:
+            m.get(POWERPAY_HOME_URL, body=home_with_chunk)
+            m.get(f"https://app.powerpay.no/_next/{chunk_url}", body=chunk_body)
+            with pytest.raises(PowerPayActionIdError):
+                await api_client._async_discover_action_id()
+
 
 class TestRscParsing:
     """Tests for RSC flight stream response parsing."""

@@ -28,9 +28,26 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Regex to find Server Action IDs in Next.js flight data
-# Action IDs are 42-char hex strings used as server references
+# Regex to find Server Action IDs in Next.js flight data.
+# Action IDs are 40-50 char hex strings used as server references.
 ACTION_ID_PATTERN = re.compile(r'"([0-9a-f]{40,50})"')
+
+# Named createServerReference calls expose both the action ID and the function
+# name from the original module. The API gateway is exported as "default";
+# the listed helper names belong to the client-side Stripe-session
+# encryption helpers and must not be used as the gateway.
+NAMED_ACTION_REF_PATTERN = re.compile(
+    r'createServerReference\)\("([0-9a-f]{40,50})"[^)]*?,\s*"([A-Za-z_$][\w$]*)"\s*\)'
+)
+GATEWAY_ACTION_NAME = "default"
+HELPER_ACTION_NAMES = frozenset(
+    {
+        "serverEncryptData",
+        "serverDecryptData",
+        "serverCreateEncryptedPayload",
+        "serverDecryptPayload",
+    }
+)
 
 
 class PowerPayAuthError(Exception):
@@ -170,7 +187,11 @@ class PowerPayApiClient:
             raise PowerPayConnectionError(f"Cannot connect to PowerPay: {err}") from err
 
     async def _async_discover_action_id(self) -> None:
-        """Discover the Server Action ID from the home page HTML/JS."""
+        # The bundle declares several named createServerReference calls. The
+        # API gateway is exported as "default"; sibling refs named
+        # serverEncryptData / serverDecryptData / serverCreateEncryptedPayload
+        # / serverDecryptPayload wrap client-side Stripe-session encryption
+        # helpers and must not be used. Read names alongside IDs to pick right.
         session = await self._ensure_session()
 
         try:
@@ -184,38 +205,62 @@ class PowerPayApiClient:
                 f"Cannot fetch home page for action ID discovery: {err}"
             ) from err
 
-        # Strategy 1: Find action IDs in inline __next_f.push() calls
-        action_ids = self._extract_action_ids_from_html(html)
-        if action_ids:
-            # Use the first valid action ID found
-            self._action_id = action_ids[0]
-            _LOGGER.debug("Discovered action ID: %s", self._action_id)
-            return
-
-        # Strategy 2: Fetch JS chunks and search for createServerReference
-        # JS URLs appear in both src= attributes and __next_f.push data
         js_urls = set(re.findall(r'static/chunks/[^\s"\\]+\.js', html))
         _LOGGER.debug("Found %d JS chunk URLs to search", len(js_urls))
 
+        named_refs: list[tuple[str, str]] = []
         for js_url in sorted(js_urls):
-            # Clean up URL (remove query params for matching, keep for fetching)
             full_url = f"{POWERPAY_BASE_URL}/_next/{js_url.split('?')[0]}"
             try:
                 async with session.get(full_url) as resp:
-                    if resp.status == 200:
-                        js_content = await resp.text()
-                        # Only search chunks that contain server action references
-                        if "createServerReference" not in js_content:
-                            continue
-                        ids = self._extract_action_ids_from_js(js_content)
-                        if ids:
-                            self._action_id = ids[0]
-                            _LOGGER.debug("Discovered action ID from JS chunk: %s", self._action_id)
-                            return
+                    if resp.status != 200:
+                        continue
+                    js_content = await resp.text()
+                    if "createServerReference" not in js_content:
+                        continue
+                    named_refs.extend(self._extract_named_action_refs(js_content))
             except aiohttp.ClientError:
                 continue
 
+        gateway_id = self._pick_gateway_action_id(named_refs)
+        if gateway_id:
+            self._action_id = gateway_id
+            _LOGGER.debug(
+                "Discovered API gateway action ID %s from %d named refs",
+                self._action_id,
+                len(named_refs),
+            )
+            return
+
+        # Fallback: legacy HTML hex scan, filtering out known helper IDs we
+        # collected from the chunks. Keeps discovery alive if PowerPay renames
+        # the gateway export, but stops picking up the encryption helpers.
+        helper_ids = {action_id for action_id, name in named_refs if name in HELPER_ACTION_NAMES}
+        html_ids = [aid for aid in self._extract_action_ids_from_html(html) if aid not in helper_ids]
+        if html_ids:
+            self._action_id = html_ids[0]
+            _LOGGER.debug(
+                "Discovered action ID %s from HTML fallback (excluded %d helper IDs)",
+                self._action_id,
+                len(helper_ids),
+            )
+            return
+
         raise PowerPayActionIdError("Could not discover Server Action ID")
+
+    @staticmethod
+    def _extract_named_action_refs(js_content: str) -> list[tuple[str, str]]:
+        return list(dict.fromkeys(NAMED_ACTION_REF_PATTERN.findall(js_content)))
+
+    @staticmethod
+    def _pick_gateway_action_id(refs: list[tuple[str, str]]) -> str | None:
+        for action_id, name in refs:
+            if name == GATEWAY_ACTION_NAME:
+                return action_id
+        for action_id, name in refs:
+            if name not in HELPER_ACTION_NAMES:
+                return action_id
+        return None
 
     def _extract_action_ids_from_html(self, html: str) -> list[str]:
         """Extract Server Action IDs from inline Next.js flight data."""
@@ -256,17 +301,6 @@ class PowerPayApiClient:
     def _is_action_id(s: str) -> bool:
         """Check if a string looks like a Server Action ID."""
         return 40 <= len(s) <= 50 and all(c in "0123456789abcdef" for c in s)
-
-    def _extract_action_ids_from_js(self, js_content: str) -> list[str]:
-        """Extract Server Action IDs from JS bundle content."""
-        action_ids = []
-        # Look for the action ID in contexts like createServerReference or bound action
-        # Pattern: action ID appears as a string literal near "createServerReference" or "callServer"
-        candidates = ACTION_ID_PATTERN.findall(js_content)
-        for candidate in candidates:
-            if 40 <= len(candidate) <= 50 and all(c in "0123456789abcdef" for c in candidate):
-                action_ids.append(candidate)
-        return list(dict.fromkeys(action_ids))
 
     async def _async_ensure_authenticated(self) -> None:
         """Ensure we have a valid authentication state."""
@@ -572,58 +606,32 @@ class PowerPayApiClient:
 
         Returns:
             The new session ID if successful, None otherwise.
-
-        Note: The POST must go to the /en/start page URL, not /en/home.
         """
         if session_end is None:
             session_end = int((time.time() + 10 * 365.25 * 24 * 3600) * 1000)
 
-        await self._async_ensure_authenticated()
-        session = await self._ensure_session()
-
-        payload = [
-            {
-                "apiName": "python",
-                "endpoint": "session",
-                "method": "POST",
-                "body": {
-                    "device_id": device_id,
-                    "outlet_index": outlet_index,
-                    "session_end": session_end,
-                    "energy_limit": energy_limit,
-                    "cost_limit": cost_limit,
-                },
-                "apiNamespacePath": "/enduser",
-                "queryParams": {},
-                "revalidationPath": "/en/start",
-            }
-        ]
-
-        headers = {
-            "Accept": "text/x-component",
-            "Content-Type": "text/plain;charset=UTF-8",
-            "next-action": self._action_id,
-        }
-
-        start_url = (
-            f"{POWERPAY_BASE_URL}/en/start?device_id={device_id}&outlet_index={outlet_index}"
+        result = await self.async_server_action(
+            api_name="python",
+            endpoint="session",
+            method="POST",
+            body={
+                "device_id": device_id,
+                "outlet_index": outlet_index,
+                "session_end": session_end,
+                "energy_limit": energy_limit,
+                "cost_limit": cost_limit,
+            },
+            api_namespace_path="/enduser",
         )
 
-        try:
-            async with session.post(start_url, headers=headers, data=json.dumps(payload)) as resp:
-                response_text = await resp.text()
-                # The response is an RSC page render that redirects to /session/<id>
-                session_ids = re.findall(
-                    r"session/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-                    response_text,
-                )
-                if session_ids:
-                    _LOGGER.info("Started session: %s", session_ids[0])
-                    return session_ids[0]
-                _LOGGER.warning("Session start did not return a session ID")
-                return None
-        except aiohttp.ClientError as err:
-            raise PowerPayConnectionError(f"Failed to start session: {err}") from err
+        if isinstance(result, dict):
+            session_id = result.get("session_id")
+            if session_id:
+                _LOGGER.info("Started session: %s", session_id)
+                return session_id
+
+        _LOGGER.warning("Session start did not return a session ID")
+        return None
 
     async def async_end_session(self, session_id: str) -> dict | None:
         """End an active session (turns off the outlet)."""

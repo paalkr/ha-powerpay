@@ -30,3 +30,4 @@ network-requests.txt
 network_*.md
 test_live*.py
 debug_*.html
+scripts/
