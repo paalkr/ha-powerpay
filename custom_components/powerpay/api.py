@@ -1,15 +1,12 @@
 """PowerPay API client.
 
-Handles Firebase authentication, Next.js Server Action discovery,
-and data fetching through the PowerPay web application.
+Handles Firebase authentication and data fetching through PowerPay's REST API.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
-import re
 import time
 from typing import Any
 
@@ -20,34 +17,12 @@ from .const import (
     FIREBASE_API_KEY,
     FIREBASE_AUTH_URL,
     FIREBASE_TOKEN_URL,
-    POWERPAY_BASE_URL,
-    POWERPAY_HOME_URL,
-    POWERPAY_LOGIN_URL,
+    POWERPAY_API_BASE,
+    POWERPAY_FASTIFY_BASE,
     TOKEN_REFRESH_BUFFER,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Regex to find Server Action IDs in Next.js flight data.
-# Action IDs are 40-50 char hex strings used as server references.
-ACTION_ID_PATTERN = re.compile(r'"([0-9a-f]{40,50})"')
-
-# Named createServerReference calls expose both the action ID and the function
-# name from the original module. The API gateway is exported as "default";
-# the listed helper names belong to the client-side Stripe-session
-# encryption helpers and must not be used as the gateway.
-NAMED_ACTION_REF_PATTERN = re.compile(
-    r'createServerReference\)\("([0-9a-f]{40,50})"[^)]*?,\s*"([A-Za-z_$][\w$]*)"\s*\)'
-)
-GATEWAY_ACTION_NAME = "default"
-HELPER_ACTION_NAMES = frozenset(
-    {
-        "serverEncryptData",
-        "serverDecryptData",
-        "serverCreateEncryptedPayload",
-        "serverDecryptPayload",
-    }
-)
 
 
 class PowerPayAuthError(Exception):
@@ -58,19 +33,14 @@ class PowerPayConnectionError(Exception):
     """Raised when connection to PowerPay fails."""
 
 
-class PowerPayActionIdError(Exception):
-    """Raised when the Server Action ID cannot be discovered."""
-
-
 class PowerPayApiClient:
     """Client for the PowerPay API.
 
-    PowerPay has no public REST API. All data flows through Next.js Server Actions
-    with deployment-specific action IDs. This client handles:
-    1. Firebase authentication (sign-in + token refresh)
-    2. Cookie-based session management
-    3. Dynamic Server Action ID discovery
-    4. RSC flight stream response parsing
+    PowerPay has no documented public API, but the web app talks to a REST API
+    at api.powerpay.no, authenticated with the Firebase ID token. This client:
+    1. Signs in with Firebase (email/password) and refreshes the token
+    2. Calls the python API (api/v1, `token` header) and the fastify report API
+       (report/api, Bearer auth) directly
     """
 
     def __init__(
@@ -88,7 +58,6 @@ class PowerPayApiClient:
         self._firebase_refresh_token: str | None = None
         self._firebase_uid: str | None = None
         self._firebase_token_expires: float = 0
-        self._action_id: str | None = None
 
     @property
     def firebase_uid(self) -> str | None:
@@ -106,10 +75,12 @@ class PowerPayApiClient:
         return self._session
 
     async def async_authenticate(self) -> None:
-        """Perform full authentication: Firebase sign-in + cookie login + action ID discovery."""
+        """Authenticate with Firebase (email/password sign-in).
+
+        The REST API authenticates per-request with the Firebase ID token, so
+        sign-in is all that's needed up front.
+        """
         await self._async_firebase_sign_in()
-        await self._async_login_cookies()
-        await self._async_discover_action_id()
 
     async def _async_firebase_sign_in(self) -> None:
         """Sign in with Firebase using email/password."""
@@ -166,157 +137,15 @@ class PowerPayApiClient:
         except aiohttp.ClientError as err:
             raise PowerPayConnectionError(f"Cannot refresh Firebase token: {err}") from err
 
-    async def _async_login_cookies(self) -> None:
-        """Call /api/login to set server-side session cookies."""
-        if not self._firebase_id_token:
-            raise PowerPayAuthError("No Firebase ID token available")
-
-        session = await self._ensure_session()
-        headers = {"Authorization": f"Bearer {self._firebase_id_token}"}
-
-        try:
-            async with session.get(POWERPAY_LOGIN_URL, headers=headers) as resp:
-                data = await resp.json()
-                if resp.status != 200 or not data.get("success"):
-                    _LOGGER.error("Cookie login failed: %s", data)
-                    raise PowerPayAuthError(
-                        f"Cookie login failed: {data.get('message', 'Unknown error')}"
-                    )
-                _LOGGER.debug("Cookie login successful, cookies set")
-        except aiohttp.ClientError as err:
-            raise PowerPayConnectionError(f"Cannot connect to PowerPay: {err}") from err
-
-    async def _async_discover_action_id(self) -> None:
-        # The bundle declares several named createServerReference calls. The
-        # API gateway is exported as "default"; sibling refs named
-        # serverEncryptData / serverDecryptData / serverCreateEncryptedPayload
-        # / serverDecryptPayload wrap client-side Stripe-session encryption
-        # helpers and must not be used. Read names alongside IDs to pick right.
-        session = await self._ensure_session()
-
-        try:
-            async with session.get(POWERPAY_HOME_URL) as resp:
-                if resp.status != 200:
-                    _LOGGER.error("Failed to fetch home page: status=%d", resp.status)
-                    raise PowerPayActionIdError(f"Failed to fetch home page: {resp.status}")
-                html = await resp.text()
-        except aiohttp.ClientError as err:
-            raise PowerPayConnectionError(
-                f"Cannot fetch home page for action ID discovery: {err}"
-            ) from err
-
-        js_urls = set(re.findall(r'static/chunks/[^\s"\\]+\.js', html))
-        _LOGGER.debug("Found %d JS chunk URLs to search", len(js_urls))
-
-        named_refs: list[tuple[str, str]] = []
-        for js_url in sorted(js_urls):
-            full_url = f"{POWERPAY_BASE_URL}/_next/{js_url.split('?')[0]}"
-            try:
-                async with session.get(full_url) as resp:
-                    if resp.status != 200:
-                        continue
-                    js_content = await resp.text()
-                    if "createServerReference" not in js_content:
-                        continue
-                    named_refs.extend(self._extract_named_action_refs(js_content))
-            except aiohttp.ClientError:
-                continue
-
-        gateway_id = self._pick_gateway_action_id(named_refs)
-        if gateway_id:
-            self._action_id = gateway_id
-            _LOGGER.debug(
-                "Discovered API gateway action ID %s from %d named refs",
-                self._action_id,
-                len(named_refs),
-            )
-            return
-
-        # Fallback: legacy HTML hex scan, filtering out known helper IDs we
-        # collected from the chunks. Keeps discovery alive if PowerPay renames
-        # the gateway export, but stops picking up the encryption helpers.
-        helper_ids = {action_id for action_id, name in named_refs if name in HELPER_ACTION_NAMES}
-        html_ids = [aid for aid in self._extract_action_ids_from_html(html) if aid not in helper_ids]
-        if html_ids:
-            self._action_id = html_ids[0]
-            _LOGGER.debug(
-                "Discovered action ID %s from HTML fallback (excluded %d helper IDs)",
-                self._action_id,
-                len(helper_ids),
-            )
-            return
-
-        raise PowerPayActionIdError("Could not discover Server Action ID")
-
-    @staticmethod
-    def _extract_named_action_refs(js_content: str) -> list[tuple[str, str]]:
-        return list(dict.fromkeys(NAMED_ACTION_REF_PATTERN.findall(js_content)))
-
-    @staticmethod
-    def _pick_gateway_action_id(refs: list[tuple[str, str]]) -> str | None:
-        for action_id, name in refs:
-            if name == GATEWAY_ACTION_NAME:
-                return action_id
-        for action_id, name in refs:
-            if name not in HELPER_ACTION_NAMES:
-                return action_id
-        return None
-
-    def _extract_action_ids_from_html(self, html: str) -> list[str]:
-        """Extract Server Action IDs from inline Next.js flight data."""
-        action_ids = []
-
-        # Find all __next_f.push calls and extract string content
-        push_pattern = re.compile(
-            r'self\.__next_f\.push\(\[[\d]+,"([^"]*(?:\\.[^"]*)*)"\]', re.DOTALL
-        )
-        for match in push_pattern.finditer(html):
-            chunk = match.group(1)
-            # Unescape the string
-            with contextlib.suppress(UnicodeDecodeError, ValueError):
-                chunk = chunk.encode().decode("unicode_escape")
-
-            # Check if the chunk itself is an action ID
-            stripped = chunk.strip()
-            if self._is_action_id(stripped):
-                action_ids.append(stripped)
-                continue
-
-            # Look for quoted action IDs within the chunk
-            candidates = ACTION_ID_PATTERN.findall(chunk)
-            for candidate in candidates:
-                if self._is_action_id(candidate):
-                    action_ids.append(candidate)
-
-        # Also search the raw HTML for hex strings that look like action IDs
-        # (they may appear outside __next_f.push in inline scripts)
-        if not action_ids:
-            for candidate in ACTION_ID_PATTERN.findall(html):
-                if self._is_action_id(candidate):
-                    action_ids.append(candidate)
-
-        return list(dict.fromkeys(action_ids))  # deduplicate preserving order
-
-    @staticmethod
-    def _is_action_id(s: str) -> bool:
-        """Check if a string looks like a Server Action ID."""
-        return 40 <= len(s) <= 50 and all(c in "0123456789abcdef" for c in s)
-
     async def _async_ensure_authenticated(self) -> None:
-        """Ensure we have a valid authentication state."""
+        """Ensure we have a valid Firebase token, refreshing if near expiry."""
         if not self._firebase_id_token:
             await self.async_authenticate()
             return
 
-        # Refresh Firebase token if approaching expiry
         if time.time() > self._firebase_token_expires - TOKEN_REFRESH_BUFFER:
             _LOGGER.debug("Firebase token approaching expiry, refreshing")
             await self._async_firebase_refresh()
-            await self._async_login_cookies()
-
-        # Ensure action ID is available
-        if not self._action_id:
-            await self._async_discover_action_id()
 
     async def async_server_action(
         self,
@@ -327,51 +156,53 @@ class PowerPayApiClient:
         api_namespace_path: str = "/enduser",
         query_params: dict[str, str] | None = None,
         other_options: dict | None = None,
+        _retry: bool = True,
     ) -> Any:
-        """Execute a Next.js Server Action call."""
+        """Call a PowerPay REST API endpoint.
+
+        PowerPay's web app talks to two backends, authenticated with the
+        Firebase ID token:
+        - the "python" API at api/v1 (token in a `token` header)
+        - the "fastify" report API at report/api (Bearer auth)
+
+        The request URL is ``{base}{api_namespace_path}/{endpoint}`` plus query
+        params. ``other_options`` is accepted for call-site compatibility but no
+        longer maps to anything (it configured the old server-action proxy).
+        """
         await self._async_ensure_authenticated()
         session = await self._ensure_session()
 
-        payload = [
-            {
-                "apiName": api_name,
-                "endpoint": endpoint,
-                "method": method,
-                "body": body,
-                "apiNamespacePath": api_namespace_path,
-                "queryParams": query_params or {},
+        if api_name == "fastify":
+            base = POWERPAY_FASTIFY_BASE
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._firebase_id_token}",
             }
-        ]
-        if other_options:
-            payload[0]["otherOptions"] = other_options
+        else:
+            base = POWERPAY_API_BASE
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "token": self._firebase_id_token or "",
+            }
 
-        headers = {
-            "Accept": "text/x-component",
-            "Content-Type": "text/plain;charset=UTF-8",
-            "next-action": self._action_id,
-        }
+        url = f"{base}{api_namespace_path}"
+        if endpoint:
+            url += f"/{endpoint}"
+
+        params = {k: str(v) for k, v in (query_params or {}).items() if v is not None}
 
         try:
-            async with session.post(
-                POWERPAY_HOME_URL, headers=headers, data=json.dumps(payload)
+            async with session.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=body if body is not None else None,
             ) as resp:
-                if resp.status == 404:
-                    # Likely a new deployment, re-discover action ID
-                    _LOGGER.warning("Server Action returned 404, re-discovering action ID")
-                    self._action_id = None
-                    await self._async_discover_action_id()
-                    return await self.async_server_action(
-                        api_name,
-                        endpoint,
-                        method,
-                        body,
-                        api_namespace_path,
-                        query_params,
-                        other_options,
-                    )
-
-                if resp.status in (401, 403):
-                    _LOGGER.warning("Server Action returned %d, re-authenticating", resp.status)
+                if resp.status in (401, 403) and _retry:
+                    _LOGGER.warning("API returned %d, re-authenticating", resp.status)
                     await self.async_authenticate()
                     return await self.async_server_action(
                         api_name,
@@ -381,85 +212,50 @@ class PowerPayApiClient:
                         api_namespace_path,
                         query_params,
                         other_options,
+                        _retry=False,
                     )
 
                 response_text = await resp.text()
 
                 if resp.status != 200:
                     _LOGGER.error(
-                        "Server Action failed: status=%d, body=%s",
+                        "API call failed: status=%d, url=%s, body=%s",
                         resp.status,
+                        url,
                         response_text[:500],
                     )
-                    raise PowerPayConnectionError(f"Server Action failed with status {resp.status}")
+                    raise PowerPayConnectionError(
+                        f"API call failed with status {resp.status}"
+                    )
 
-                return self._parse_rsc_response(response_text)
+                if not response_text:
+                    return None
+
+                try:
+                    data = json.loads(response_text)
+                except (json.JSONDecodeError, ValueError) as err:
+                    raise PowerPayConnectionError(
+                        f"Could not parse API response: {err}"
+                    ) from err
+
+                return self._unwrap(data)
 
         except aiohttp.ClientError as err:
-            raise PowerPayConnectionError(f"Server Action request failed: {err}") from err
+            raise PowerPayConnectionError(f"API request failed: {err}") from err
 
-    def _parse_rsc_response(self, text: str) -> Any:
-        """Parse an RSC flight stream response to extract the data payload.
+    @staticmethod
+    def _unwrap(data: Any) -> Any:
+        """Unwrap the fastify ag-Grid envelope; pass python responses through.
 
-        RSC flight format has lines like:
-        0:{"a":"$@1","f":"","b":"..."}  (metadata, references line 1)
-        1:{"status":200,"message":"Success","data":[...]}  (actual data)
-
-        The actual API response is in the line referenced by the metadata's "$@N".
+        The python API (api/v1) returns bare JSON (list or dict). The fastify
+        report API wraps ag-Grid results as
+        ``{"success": ..., "rowIdKey": ..., "data": {"rowData": [...], "rowCount": N}}``.
         """
-        lines = text.strip().split("\n")
-
-        # First pass: find the data line (usually line index 1)
-        # The metadata line (index 0) contains "$@N" referencing the data line
-        parsed_lines: dict[str, Any] = {}
-        for line in lines:
-            colon_idx = line.find(":")
-            if colon_idx == -1:
-                continue
-            idx_str = line[:colon_idx]
-            payload_str = line[colon_idx + 1 :]
-            try:
-                parsed_lines[idx_str] = json.loads(payload_str)
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-        # Strategy 1: Follow the metadata reference
-        meta = parsed_lines.get("0")
-        if isinstance(meta, dict) and "a" in meta:
-            ref = meta["a"]
-            if isinstance(ref, str) and ref.startswith("$@"):
-                ref_idx = ref[2:]
-                data_line = parsed_lines.get(ref_idx)
-                if data_line is not None:
-                    return self._unwrap_api_response(data_line)
-
-        # Strategy 2: Find the line with actual data content
-        for _idx, parsed in sorted(parsed_lines.items()):
-            result = self._unwrap_api_response(parsed)
-            if result is not None:
-                return result
-
-        _LOGGER.warning("Could not parse RSC response: %s", text[:500])
-        return None
-
-    def _unwrap_api_response(self, data: Any) -> Any:
-        """Unwrap an API response, handling the status/data wrapper."""
         if isinstance(data, dict):
-            # PowerPay wraps responses in {"status": 200, "data": ...}
-            if "status" in data and "data" in data:
-                inner = data["data"]
-                # ag-Grid responses have nested data
-                if isinstance(inner, dict) and "rowData" in inner:
-                    return inner.get("rowData", [])
-                return inner
-            # Direct data objects
-            if any(key in data for key in ("session_id", "site_id", "rowData", "rowCount")):
-                return data
-
-        if isinstance(data, list) and data and isinstance(data[0], dict):
-            return data
-
-        return None
+            inner = data.get("data")
+            if isinstance(inner, dict) and "rowData" in inner:
+                return inner.get("rowData", [])
+        return data
 
     # ---- High-level API methods ----
 

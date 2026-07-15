@@ -98,14 +98,12 @@ The calculated cost is always ≥ the billed cost. The difference shrinks as you
 
 ## Technical details
 
-PowerPay has no public REST API. This integration reverse-engineers the web application's internal API:
+PowerPay has no documented public API. This integration uses the same private REST API the web app talks to:
 
 1. **Firebase Authentication** — Signs in with your email/password to get an ID token
-2. **Cookie session** — Exchanges the Firebase token for server-side session cookies
-3. **Server Action discovery** — Finds the deployment-specific action ID from the Next.js JavaScript bundles
-4. **Data fetching** — Makes Next.js Server Action calls to fetch session, device, and billing data
+2. **Data fetching** — Calls the PowerPay REST API (`api.powerpay.no`) directly with the Firebase token to fetch session, device, and billing data
 
-The action ID changes with each deployment of the PowerPay web app. The integration automatically re-discovers it when needed.
+The Firebase token is refreshed automatically before it expires.
 
 ### API data units
 
@@ -123,7 +121,7 @@ The action ID changes with each deployment of the PowerPay web app. The integrat
 
 - **Session start may not work for all outlets** — Starting a session requires a valid subscription and payment method. Some outlets may reject sessions due to hardware or configuration issues.
 - **No historical data import** — Only the current session and monthly billing are tracked. Past session details are not imported.
-- **Action ID fragility** — If PowerPay significantly changes their web app architecture, the action ID discovery may need updating.
+- **Unofficial API** — This relies on PowerPay's private API, which can change without notice. A major backend change may require an integration update.
 - **Billing rounds to whole kWh** — The session billed cost lags behind actual consumption until the next full kWh is reached.
 
 ## Development

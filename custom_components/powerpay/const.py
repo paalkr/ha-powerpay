@@ -13,10 +13,10 @@ FIREBASE_API_KEY = "AIzaSyAJIGt9onPpun0xIhTnlpL6PX1-Ahm0EPs"
 FIREBASE_AUTH_URL = "https://identitytoolkit.googleapis.com/v1"
 FIREBASE_TOKEN_URL = "https://securetoken.googleapis.com/v1/token"
 
-# PowerPay app URLs
-POWERPAY_BASE_URL = "https://app.powerpay.no"
-POWERPAY_LOGIN_URL = f"{POWERPAY_BASE_URL}/api/login"
-POWERPAY_HOME_URL = f"{POWERPAY_BASE_URL}/en/home"
+# PowerPay REST API bases. The web app calls these directly with the Firebase
+# ID token (python API: `token` header; fastify report API: Bearer auth).
+POWERPAY_API_BASE = "https://api.powerpay.no/api/v1"
+POWERPAY_FASTIFY_BASE = "https://api.powerpay.no/report/api"
 
 # Polling intervals (seconds)
 SCAN_INTERVAL_ACTIVE = 60

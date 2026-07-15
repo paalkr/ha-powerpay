@@ -119,8 +119,6 @@ MOCK_FIREBASE_REFRESH_RESPONSE = {
     "expires_in": "3600",
 }
 
-MOCK_LOGIN_RESPONSE = {"success": True}
-
 MOCK_RAW_SESSION = {
     "session_id": MOCK_SESSION_ID,
     "start_ts": 1757618021694,
@@ -176,12 +174,3 @@ MOCK_CONSUMPTION_DATA = [
         "max_power_avg_15m": 949.22,
     }
 ]
-
-# Mock HTML with embedded action ID for discovery tests.
-# The __next_f.push format wraps the hex ID as a quoted string inside JSON data.
-MOCK_ACTION_ID = "7f4f716aab1d9072cac29ef3d3aa492b918c8d4aa3"
-MOCK_HOME_HTML = (
-    "<!DOCTYPE html><html><head><title>PowerPay</title></head><body>"
-    '<script>self.__next_f.push([1,"' + MOCK_ACTION_ID + '"])</script>'
-    "</body></html>"
-)
