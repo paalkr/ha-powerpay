@@ -228,7 +228,10 @@ class TestRestTransport:
         with aioresponses() as m:
             # First call rejected, re-auth via Firebase, retry succeeds.
             m.get(SESSION_URL, status=401)
-            m.post(re.compile(r".*/accounts:signInWithPassword.*"), payload=MOCK_FIREBASE_SIGN_IN_RESPONSE)
+            m.post(
+                re.compile(r".*/accounts:signInWithPassword.*"),
+                payload=MOCK_FIREBASE_SIGN_IN_RESPONSE,
+            )
             m.get(SESSION_URL, payload=[{"id": 1}])
             result = await authed_client.async_server_action(
                 api_name="python", endpoint="session", method="GET"

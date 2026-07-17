@@ -224,9 +224,7 @@ class PowerPayApiClient:
                         url,
                         response_text[:500],
                     )
-                    raise PowerPayConnectionError(
-                        f"API call failed with status {resp.status}"
-                    )
+                    raise PowerPayConnectionError(f"API call failed with status {resp.status}")
 
                 if not response_text:
                     return None
@@ -234,9 +232,7 @@ class PowerPayApiClient:
                 try:
                     data = json.loads(response_text)
                 except (json.JSONDecodeError, ValueError) as err:
-                    raise PowerPayConnectionError(
-                        f"Could not parse API response: {err}"
-                    ) from err
+                    raise PowerPayConnectionError(f"Could not parse API response: {err}") from err
 
                 return self._unwrap(data)
 
